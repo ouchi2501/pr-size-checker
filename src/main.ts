@@ -1,5 +1,5 @@
 import * as core from '@actions/core'
-import { wait } from './wait'
+import * as github from '@actions/github'
 
 /**
  * The main function for the action.
@@ -7,20 +7,49 @@ import { wait } from './wait'
  */
 export async function run(): Promise<void> {
   try {
-    const ms: string = core.getInput('milliseconds')
+    const token = core.getInput('github-token', { required: true })
+    const maxLines = parseInt(
+      core.getInput('max-lines', { required: true }),
+      10
+    )
 
-    // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-    core.debug(`Waiting ${ms} milliseconds ...`)
+    if (isNaN(maxLines)) {
+      throw new Error(
+        `Invalid value for max-lines: ${core.getInput('max-lines')}`
+      )
+    }
 
-    // Log the current timestamp, wait, then log the new timestamp
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
+    const octokit = github.getOctokit(token)
 
-    // Set outputs for other workflow steps to use
-    core.setOutput('time', new Date().toTimeString())
+    const { pull_request } = github.context.payload
+    if (!pull_request) {
+      throw new Error('This action can only be run on pull requests')
+    }
+
+    const { data } = await octokit.rest.pulls.get({
+      owner: github.context.repo.owner,
+      repo: github.context.repo.repo,
+      pull_number: pull_request.number,
+      mediaType: {
+        format: 'diff'
+      }
+    })
+
+    const diffLines = (data as unknown as string).split('\n').length
+
+    // Log the results
+    core.info(`PR changes: ${diffLines} lines`)
+    core.info(`Maximum allowed lines: ${maxLines}`)
+
+    // Check if the number of lines exceeds the maximum
+    if (diffLines > maxLines) {
+      core.setFailed(
+        `PR size is too large. ${diffLines} lines changed (max ${maxLines})`
+      )
+    } else {
+      core.info('PR size is within the acceptable range.')
+    }
   } catch (error) {
-    // Fail the workflow run if an error occurs
     if (error instanceof Error) core.setFailed(error.message)
   }
 }

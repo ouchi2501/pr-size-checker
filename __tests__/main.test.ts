@@ -1,89 +1,105 @@
-/**
- * Unit tests for the action's main functionality, src/main.ts
- *
- * These should be run as if the action was called from a workflow.
- * Specifically, the inputs listed in `action.yml` should be set as environment
- * variables following the pattern `INPUT_<INPUT_NAME>`.
- */
-
 import * as core from '@actions/core'
-import * as main from '../src/main'
-
-// Mock the action's main function
-const runMock = jest.spyOn(main, 'run')
-
-// Other utilities
-const timeRegex = /^\d{2}:\d{2}:\d{2}/
+import * as github from '@actions/github'
+import { run } from '../src/main'
 
 // Mock the GitHub Actions core library
-let debugMock: jest.SpiedFunction<typeof core.debug>
-let errorMock: jest.SpiedFunction<typeof core.error>
-let getInputMock: jest.SpiedFunction<typeof core.getInput>
-let setFailedMock: jest.SpiedFunction<typeof core.setFailed>
-let setOutputMock: jest.SpiedFunction<typeof core.setOutput>
+jest.mock('@actions/core')
+jest.mock('@actions/github')
 
-describe('action', () => {
+describe('PR Size Check Action', () => {
+  let mockGetInput: jest.SpyInstance
+  let mockSetFailed: jest.SpyInstance
+  let mockInfo: jest.SpyInstance
+  let mockGetOctokit: jest.SpyInstance
+  let mockOctokit: {
+    rest: {
+      pulls: {
+        get: jest.Mock
+      }
+    }
+  }
+
   beforeEach(() => {
     jest.clearAllMocks()
+    mockGetInput = jest.spyOn(core, 'getInput')
+    mockSetFailed = jest.spyOn(core, 'setFailed')
+    mockInfo = jest.spyOn(core, 'info')
+    mockGetOctokit = jest.spyOn(github, 'getOctokit')
+    mockOctokit = {
+      rest: {
+        pulls: {
+          get: jest.fn()
+        }
+      }
+    }
+    mockGetOctokit.mockReturnValue(mockOctokit)
 
-    debugMock = jest.spyOn(core, 'debug').mockImplementation()
-    errorMock = jest.spyOn(core, 'error').mockImplementation()
-    getInputMock = jest.spyOn(core, 'getInput').mockImplementation()
-    setFailedMock = jest.spyOn(core, 'setFailed').mockImplementation()
-    setOutputMock = jest.spyOn(core, 'setOutput').mockImplementation()
+    // Mock github context
+    ;(github.context as unknown) = {
+      payload: {
+        pull_request: {
+          number: 1
+        }
+      },
+      repo: {
+        owner: 'testowner',
+        repo: 'testrepo'
+      }
+    }
   })
 
-  it('sets the time output', async () => {
-    // Set the action's inputs as return values from core.getInput()
-    getInputMock.mockImplementation(name => {
-      switch (name) {
-        case 'milliseconds':
-          return '500'
-        default:
-          return ''
-      }
+  it('should pass when PR size is within limit', async () => {
+    mockGetInput.mockImplementation((name: string) => {
+      if (name === 'github-token') return 'fake-token'
+      if (name === 'max-lines') return '300'
+      return ''
     })
 
-    await main.run()
-    expect(runMock).toHaveReturned()
+    mockOctokit.rest.pulls.get.mockResolvedValue({
+      data: 'diff\n'.repeat(200)
+    })
 
-    // Verify that all of the core library functions were called correctly
-    expect(debugMock).toHaveBeenNthCalledWith(1, 'Waiting 500 milliseconds ...')
-    expect(debugMock).toHaveBeenNthCalledWith(
-      2,
-      expect.stringMatching(timeRegex)
+    await run()
+
+    expect(mockInfo).toHaveBeenCalledWith('PR changes: 201 lines')
+    expect(mockInfo).toHaveBeenCalledWith('Maximum allowed lines: 300')
+    expect(mockInfo).toHaveBeenCalledWith(
+      'PR size is within the acceptable range.'
     )
-    expect(debugMock).toHaveBeenNthCalledWith(
-      3,
-      expect.stringMatching(timeRegex)
-    )
-    expect(setOutputMock).toHaveBeenNthCalledWith(
-      1,
-      'time',
-      expect.stringMatching(timeRegex)
-    )
-    expect(errorMock).not.toHaveBeenCalled()
+    expect(mockSetFailed).not.toHaveBeenCalled()
   })
 
-  it('sets a failed status', async () => {
-    // Set the action's inputs as return values from core.getInput()
-    getInputMock.mockImplementation(name => {
-      switch (name) {
-        case 'milliseconds':
-          return 'this is not a number'
-        default:
-          return ''
-      }
+  it('should fail when PR size exceeds limit', async () => {
+    mockGetInput.mockImplementation((name: string) => {
+      if (name === 'github-token') return 'fake-token'
+      if (name === 'max-lines') return '300'
+      return ''
     })
 
-    await main.run()
-    expect(runMock).toHaveReturned()
+    mockOctokit.rest.pulls.get.mockResolvedValue({
+      data: 'diff\n'.repeat(400)
+    })
 
-    // Verify that all of the core library functions were called correctly
-    expect(setFailedMock).toHaveBeenNthCalledWith(
-      1,
-      'milliseconds not a number'
+    await run()
+
+    expect(mockInfo).toHaveBeenCalledWith('PR changes: 401 lines')
+    expect(mockInfo).toHaveBeenCalledWith('Maximum allowed lines: 300')
+    expect(mockSetFailed).toHaveBeenCalledWith(
+      'PR size is too large. 401 lines changed (max 300)'
     )
-    expect(errorMock).not.toHaveBeenCalled()
+  })
+
+  it('should handle invalid max-lines input', async () => {
+    mockGetInput.mockImplementation((name: string) => {
+      if (name === 'github-token') return 'fake-token'
+      if (name === 'max-lines') return 'not-a-number'
+      return ''
+    })
+
+    await run()
+
+    expect(mockSetFailed).toHaveBeenCalledWith(
+      'Invalid value for max-lines: not-a-number'
+    )
   })
 })
