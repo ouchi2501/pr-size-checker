@@ -1,23 +1,15 @@
-name: 'The name of your action here'
-description: 'Provide a description here'
-author: 'Your name or organization here'
-
-# Add your action's branding here. This will appear on the GitHub Marketplace.
-branding:
-  icon: 'heart'
-  color: 'red'
+name: 'PR Size Checker'
+description: 'Check the size of a pull request and comment if it is too large.'
+author: 'ouchi2501'
 
 # Define your inputs here.
 inputs:
-  milliseconds:
-    description: 'Your input description here'
+  github-token:
+    description: 'Derivative token for using the GitHub REST API'
     required: true
-    default: '1000'
-
-# Define your outputs here.
-outputs:
-  time:
-    description: 'Your output description here'
+  max-lines:
+    description: 'The maximum number of lines to output'
+    required: true
 
 runs:
   using: node20
